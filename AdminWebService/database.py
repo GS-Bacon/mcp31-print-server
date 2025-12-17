@@ -43,9 +43,16 @@ def init_db():
                 is_default INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'Unknown',
                 ping_ms TEXT DEFAULT 'N/A',
-                last_check TEXT
+                last_check TEXT,
+                paper_width_dots INTEGER DEFAULT 576
             )
         ''')
+
+        # 既存テーブルにpaper_width_dotsカラムがない場合は追加
+        cursor.execute("PRAGMA table_info(printers)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if 'paper_width_dots' not in columns:
+            cursor.execute('ALTER TABLE printers ADD COLUMN paper_width_dots INTEGER DEFAULT 576')
 
         # ジョブテーブル
         cursor.execute('''
@@ -80,15 +87,36 @@ def get_printer(ip_address: str):
         return dict(row) if row else None
 
 
-def add_printer(name: str, ip_address: str):
+def add_printer(name: str, ip_address: str, paper_width_dots: int = 576):
     """プリンタを追加"""
     with db_connection() as conn:
         cursor = conn.cursor()
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute('''
-            INSERT INTO printers (ip_address, name, is_default, status, ping_ms, last_check)
-            VALUES (?, ?, 0, 'Unknown', 'N/A', ?)
-        ''', (ip_address, name, now))
+            INSERT INTO printers (ip_address, name, is_default, status, ping_ms, last_check, paper_width_dots)
+            VALUES (?, ?, 0, 'Unknown', 'N/A', ?, ?)
+        ''', (ip_address, name, now, paper_width_dots))
+
+
+def update_printer(ip_address: str, name: str = None, paper_width_dots: int = None):
+    """プリンタ情報を更新"""
+    with db_connection() as conn:
+        cursor = conn.cursor()
+        updates = []
+        params = []
+        if name is not None:
+            updates.append('name = ?')
+            params.append(name)
+        if paper_width_dots is not None:
+            updates.append('paper_width_dots = ?')
+            params.append(paper_width_dots)
+        if updates:
+            params.append(ip_address)
+            cursor.execute(f'''
+                UPDATE printers SET {', '.join(updates)} WHERE ip_address = ?
+            ''', params)
+            return cursor.rowcount > 0
+        return False
 
 
 def delete_printer(ip_address: str):

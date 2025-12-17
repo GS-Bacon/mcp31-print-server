@@ -8,3 +8,6 @@ python-escpos>=3.0
 
 # 管理Web API
 flask>=3.0.0
+
+# サービスディスカバリ (mDNS/Zeroconf)
+zeroconf>=0.131.0

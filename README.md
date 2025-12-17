@@ -13,6 +13,8 @@ Star MCP31レシートプリンタ向けの印刷サーバーシステムです�
   - 疎通確認 (Ping)
   - テスト印刷
   - ジョブキュー管理
+- **サービスディスカバリ (mDNS/Zeroconf)**: ローカルネットワーク内でサーバーを自動発見
+  - 他のサービスからIPアドレス指定不要でサーバーに接続可能
 - **Google Forms連携 (google_forms_printer)**: フォーム回答を自動印刷
 
 ## 必要環境
@@ -72,6 +74,41 @@ driver.cut_paper()
 
 ## API仕様
 
+### 外部公開API - ポート5000
+
+外部から接続可能なプリンタ情報を取得できます。
+
+| メソッド | エンドポイント | 説明 |
+|---------|---------------|------|
+| GET | `/api/printers` | 登録済みプリンタ一覧を取得 |
+| GET | `/api/printers/<ip>` | 指定IPのプリンタ情報を取得 |
+
+#### レスポンス例
+
+```bash
+# プリンタ一覧取得
+curl http://localhost:5000/api/printers
+```
+
+```json
+[
+  {
+    "name": "Reception",
+    "ip_address": "192.168.1.100",
+    "paper_width_dots": 576,
+    "status": "OK",
+    "is_default": true
+  },
+  {
+    "name": "Kitchen",
+    "ip_address": "192.168.1.101",
+    "paper_width_dots": 384,
+    "status": "OK",
+    "is_default": false
+  }
+]
+```
+
 ### 管理API (AdminWebService) - ポート5000
 
 #### プリンタ設定
@@ -80,6 +117,7 @@ driver.cut_paper()
 |---------|---------------|------|
 | GET | `/admin/config/printers` | 登録済みプリンタ一覧を取得 |
 | POST | `/admin/config/printers` | プリンタを登録 |
+| PUT | `/admin/config/printers/<ip>` | プリンタ情報を更新 |
 | DELETE | `/admin/config/printers/<ip>` | プリンタを削除 |
 | POST | `/admin/config/default` | デフォルトプリンタを設定 |
 
@@ -105,10 +143,15 @@ driver.cut_paper()
 #### リクエスト例
 
 ```bash
-# プリンタ登録
+# プリンタ登録 (paper_width_dotsはオプション、デフォルト576)
 curl -X POST http://localhost:5000/admin/config/printers \
   -H "Content-Type: application/json" \
-  -d '{"name": "Reception", "ip_address": "192.168.1.100"}'
+  -d '{"name": "Reception", "ip_address": "192.168.1.100", "paper_width_dots": 576}'
+
+# プリンタ情報更新
+curl -X PUT http://localhost:5000/admin/config/printers/192.168.1.100 \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Front Desk", "paper_width_dots": 384}'
 
 # 画像アップロード
 curl -X POST http://localhost:5000/admin/action/upload_test_image \
@@ -138,6 +181,71 @@ client.send_data(
 
 設定ファイル `WebService/client/MyActualServerConfig.py` でサーバーIP/ポートを指定。
 
+## サービスディスカバリ (mDNS)
+
+サーバー起動時に自動的にmDNS (Zeroconf/Bonjour) でサービスをアドバタイズします。
+ローカルネットワーク内の他のサービスは、IPアドレスを事前に知らなくてもサーバーを発見できます。
+
+### サーバー側
+
+管理コンソール起動時に自動でmDNSサービスが登録されます:
+
+```
+$ python AdminWebService/admin_server.py
+Database initialized
+Job worker started
+mDNS service registered: MCP31 Print Server._mcp31print._tcp.local.
+  - IP: 192.168.1.50
+  - Port: 5000
+  - Service Type: _mcp31print._tcp.local.
+```
+
+### クライアント側 (CLIツール)
+
+```bash
+# サーバーを検索
+python discovery.py
+
+# 全サーバーを表示
+python discovery.py --all
+
+# JSON形式で出力
+python discovery.py --json
+
+# タイムアウト指定 (秒)
+python discovery.py --timeout 5
+```
+
+### クライアント側 (Pythonから利用)
+
+```python
+from discovery import discover_print_server, get_printers_api_url
+import requests
+
+# サーバーを自動発見
+server = discover_print_server()
+if server:
+    print(f"Found server: {server['ip']}:{server['port']}")
+
+# API URLを取得してプリンタ一覧を取得
+api_url = get_printers_api_url()
+if api_url:
+    response = requests.get(api_url)
+    printers = response.json()
+    for p in printers:
+        print(f"Printer: {p['name']} ({p['ip_address']}) - {p['paper_width_dots']} dots")
+```
+
+### 発見できる情報
+
+| プロパティ | 説明 |
+|-----------|------|
+| `ip` | サーバーのIPアドレス |
+| `port` | サーバーのポート番号 |
+| `hostname` | サーバーのホスト名 |
+| `properties.path` | プリンターAPI パス (`/api/printers`) |
+| `properties.version` | APIバージョン |
+
 ## ディレクトリ構成
 
 ```
@@ -147,11 +255,12 @@ mcp31-print-server/
 │   ├── image_converter.py # 画像変換
 │   └── local_config.py   # ローカル設定
 ├── AdminWebService/      # 管理Webコンソール
-│   ├── admin_server.py   # Flask APIサーバー
+│   ├── admin_server.py   # Flask APIサーバー (mDNS対応)
 │   ├── database.py       # SQLite DB
 │   ├── templates/        # HTMLテンプレート
 │   └── static/           # CSS/JS
 ├── google_forms_printer/ # Google Forms連携
+├── discovery.py          # サーバー自動発見ユーティリティ
 └── requirements.txt      # 依存パッケージ
 ```
 

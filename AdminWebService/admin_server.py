@@ -7,9 +7,20 @@ import uuid
 import subprocess
 import threading
 import queue
+import socket
+import atexit
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
+
+# mDNS/Zeroconf サービスディスカバリ
+try:
+    from zeroconf import ServiceInfo, Zeroconf
+    ZEROCONF_AVAILABLE = True
+except ImportError:
+    ZEROCONF_AVAILABLE = False
+    print("Warning: zeroconf not installed. Service discovery disabled.")
+    print("Install with: pip install zeroconf")
 
 # プロジェクトルートをパスに追加
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -56,18 +67,63 @@ def add_printer():
 
         name = data.get('name', '').strip()
         ip_address = data.get('ip_address', '').strip()
+        paper_width_dots = data.get('paper_width_dots', 576)
 
         if not name:
             return jsonify({"status": "error", "message": "プリンタ名が必要です"}), 400
         if not ip_address:
             return jsonify({"status": "error", "message": "IPアドレスが必要です"}), 400
 
+        # paper_width_dotsのバリデーション
+        try:
+            paper_width_dots = int(paper_width_dots)
+            if paper_width_dots <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "paper_width_dotsは正の整数である必要があります"}), 400
+
         # 既存チェック
         if db.get_printer(ip_address):
             return jsonify({"status": "error", "message": f"IP {ip_address} は既に登録されています"}), 400
 
-        db.add_printer(name, ip_address)
+        db.add_printer(name, ip_address, paper_width_dots)
         return jsonify({"status": "success", "message": f"プリンタ '{name}' を登録しました"})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/admin/config/printers/<ip>', methods=['PUT'])
+def update_printer(ip):
+    """プリンタ情報の更新"""
+    try:
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({"status": "error", "message": "リクエストボディが空です"}), 400
+
+        if not db.get_printer(ip):
+            return jsonify({"status": "error", "message": f"プリンタ {ip} が見つかりません"}), 404
+
+        name = data.get('name')
+        paper_width_dots = data.get('paper_width_dots')
+
+        if name is not None:
+            name = name.strip()
+            if not name:
+                return jsonify({"status": "error", "message": "プリンタ名を空にすることはできません"}), 400
+
+        if paper_width_dots is not None:
+            try:
+                paper_width_dots = int(paper_width_dots)
+                if paper_width_dots <= 0:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                return jsonify({"status": "error", "message": "paper_width_dotsは正の整数である必要があります"}), 400
+
+        if db.update_printer(ip, name, paper_width_dots):
+            return jsonify({"status": "success", "message": f"プリンタ {ip} を更新しました"})
+        else:
+            return jsonify({"status": "error", "message": "更新するデータがありません"}), 400
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -419,6 +475,51 @@ def get_thumbnail():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# === 外部公開API (/api) ===
+
+@app.route('/api/printers', methods=['GET'])
+def api_get_printers():
+    """
+    外部公開用: 登録済みプリンタ一覧を取得
+    IPアドレス、名前、紙幅(dots)、ステータスを返す
+    """
+    try:
+        printers = db.get_all_printers()
+        # 外部公開用に必要な情報のみを抽出
+        result = []
+        for printer in printers:
+            result.append({
+                "name": printer.get("name"),
+                "ip_address": printer.get("ip_address"),
+                "paper_width_dots": printer.get("paper_width_dots", 576),
+                "status": printer.get("status", "Unknown"),
+                "is_default": bool(printer.get("is_default", 0))
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/printers/<ip>', methods=['GET'])
+def api_get_printer(ip):
+    """
+    外部公開用: 指定IPのプリンタ情報を取得
+    """
+    try:
+        printer = db.get_printer(ip)
+        if not printer:
+            return jsonify({"status": "error", "message": f"プリンタ {ip} が見つかりません"}), 404
+        return jsonify({
+            "name": printer.get("name"),
+            "ip_address": printer.get("ip_address"),
+            "paper_width_dots": printer.get("paper_width_dots", 576),
+            "status": printer.get("status", "Unknown"),
+            "is_default": bool(printer.get("is_default", 0))
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # === 静的ファイル & フロントエンド ===
 
 @app.route('/')
@@ -495,6 +596,84 @@ def start_worker():
     print("Job worker started")
 
 
+# === mDNS サービスディスカバリ ===
+
+# グローバル変数でZeroconfインスタンスを保持
+_zeroconf = None
+_service_info = None
+
+SERVICE_TYPE = "_mcp31print._tcp.local."
+SERVICE_NAME = "MCP31 Print Server._mcp31print._tcp.local."
+
+
+def get_local_ip():
+    """ローカルIPアドレスを取得"""
+    try:
+        # ダミーのUDP接続を使用してローカルIPを取得
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def register_mdns_service(port=5000):
+    """mDNSサービスを登録してネットワークにアドバタイズ"""
+    global _zeroconf, _service_info
+
+    if not ZEROCONF_AVAILABLE:
+        print("mDNS service registration skipped (zeroconf not available)")
+        return False
+
+    try:
+        local_ip = get_local_ip()
+        hostname = socket.gethostname()
+
+        _service_info = ServiceInfo(
+            SERVICE_TYPE,
+            SERVICE_NAME,
+            addresses=[socket.inet_aton(local_ip)],
+            port=port,
+            properties={
+                "path": "/api/printers",
+                "version": "1.0",
+                "hostname": hostname
+            },
+            server=f"{hostname}.local."
+        )
+
+        _zeroconf = Zeroconf()
+        _zeroconf.register_service(_service_info)
+
+        print(f"mDNS service registered: {SERVICE_NAME}")
+        print(f"  - IP: {local_ip}")
+        print(f"  - Port: {port}")
+        print(f"  - Service Type: {SERVICE_TYPE}")
+        return True
+
+    except Exception as e:
+        print(f"Failed to register mDNS service: {e}")
+        return False
+
+
+def unregister_mdns_service():
+    """mDNSサービスを登録解除"""
+    global _zeroconf, _service_info
+
+    if _zeroconf and _service_info:
+        try:
+            _zeroconf.unregister_service(_service_info)
+            _zeroconf.close()
+            print("mDNS service unregistered")
+        except Exception as e:
+            print(f"Error unregistering mDNS service: {e}")
+        finally:
+            _zeroconf = None
+            _service_info = None
+
+
 # === メイン ===
 
 if __name__ == '__main__':
@@ -504,6 +683,12 @@ if __name__ == '__main__':
 
     # ワーカー起動
     start_worker()
+
+    # mDNSサービス登録
+    register_mdns_service(port=5000)
+
+    # 終了時にサービスを登録解除
+    atexit.register(unregister_mdns_service)
 
     # サーバー起動（debugモード無効でワーカーが正しく動作する）
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
