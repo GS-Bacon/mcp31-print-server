@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP31 プリンタ管理コンソール</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            text-align: center;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        header h1 {
+            font-size: 1.8rem;
+            margin-bottom: 5px;
+        }
+        header p {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+        .card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .card h2 {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+        }
+        .btn-success {
+            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+        }
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #334;
+            border-radius: 5px;
+            background: #0f0f23;
+            color: #eee;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .form-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .form-row input {
+            margin-bottom: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #334;
+        }
+        th {
+            background: #0f0f23;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+        .status-ok {
+            color: #2ecc71;
+            font-weight: bold;
+        }
+        .status-failure {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        .status-unknown {
+            color: #f39c12;
+        }
+        .status-queued {
+            color: #3498db;
+        }
+        .status-processing {
+            color: #f39c12;
+        }
+        .status-success {
+            color: #2ecc71;
+        }
+        .status-failed, .status-deleted {
+            color: #e74c3c;
+        }
+        .default-badge {
+            background: #667eea;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            margin-left: 5px;
+        }
+        .message {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            display: none;
+        }
+        .message.success {
+            background: rgba(46, 204, 113, 0.2);
+            border: 1px solid #2ecc71;
+            color: #2ecc71;
+        }
+        .message.error {
+            background: rgba(231, 76, 60, 0.2);
+            border: 1px solid #e74c3c;
+            color: #e74c3c;
+        }
+        .actions {
+            display: flex;
+            gap: 5px;
+        }
+        .thumbnail {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 5px;
+            background: #0f0f23;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .queue-count {
+            background: #e74c3c;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+        }
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MCP31 プリンタ管理コンソール</h1>
+            <p>プリンタの設定・監視・テスト印刷を行います</p>
+        </header>
+
+        <div id="globalMessage" class="message"></div>
+
+        <div class="grid">
+            <!-- プリンタ登録 -->
+            <div class="card">
+                <h2>プリンタ登録</h2>
+                <div class="form-row">
+                    <input type="text" id="printerName" placeholder="プリンタ名">
+                    <input type="text" id="printerIp" placeholder="IPアドレス">
+                </div>
+                <button class="btn" onclick="addPrinter()">登録</button>
+                <button class="btn" onclick="pingAllPrinters()">全てPing</button>
+            </div>
+
+            <!-- テスト印刷 -->
+            <div class="card">
+                <h2>テスト印刷</h2>
+                <select id="testPrinterSelect">
+                    <option value="">プリンタを選択...</option>
+                </select>
+                <select id="testFileSelect">
+                    <option value="">ファイルを選択...</option>
+                </select>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn btn-success" onclick="testPrint()">印刷実行</button>
+                    <div class="file-input-wrapper">
+                        <button class="btn">画像アップロード</button>
+                        <input type="file" id="uploadFile" accept=".png,.jpg,.jpeg,.bmp" onchange="uploadImage()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- プリンタ一覧 -->
+            <div class="card full-width">
+                <h2>登録済みプリンタ</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>名前</th>
+                            <th>IPアドレス</th>
+                            <th>状態</th>
+                            <th>応答時間</th>
+                            <th>最終確認</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="printerTableBody">
+                        <tr><td colspan="6" style="text-align: center;">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- ジョブキュー -->
+            <div class="card full-width">
+                <h2>印刷ジョブキュー <span id="queueCount" class="queue-count">0</span></h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>サムネイル</th>
+                            <th>ジョブID</th>
+                            <th>ファイル</th>
+                            <th>プリンタ</th>
+                            <th>状態</th>
+                            <th>登録日時</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="jobTableBody">
+                        <tr><td colspan="7" style="text-align: center;">読み込み中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/admin';
+
+        // === ユーティリティ ===
+        function showMessage(text, type = 'success') {
+            const msg = document.getElementById('globalMessage');
+            msg.textContent = text;
+            msg.className = `message ${type}`;
+            msg.style.display = 'block';
+            setTimeout(() => { msg.style.display = 'none'; }, 5000);
+        }
+
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: {}
+            };
+            if (body && !(body instanceof FormData)) {
+                options.headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(body);
+            } else if (body instanceof FormData) {
+                options.body = body;
+            }
+            const response = await fetch(API_BASE + endpoint, options);
+            return response.json();
+        }
+
+        // === プリンタ管理 ===
+        async function loadPrinters() {
+            try {
+                const printers = await apiCall('/config/printers');
+                const tbody = document.getElementById('printerTableBody');
+                const select = document.getElementById('testPrinterSelect');
+
+                if (printers.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">プリンタが登録されていません</td></tr>';
+                    select.innerHTML = '<option value="">プリンタを選択...</option>';
+                    return;
+                }
+
+                tbody.innerHTML = printers.map(p => `
+                    <tr>
+                        <td>
+                            ${p.name}
+                            ${p.is_default ? '<span class="default-badge">デフォルト</span>' : ''}
+                        </td>
+                        <td>${p.ip_address}</td>
+                        <td class="status-${p.status.toLowerCase()}">${p.status}</td>
+                        <td>${p.ping_ms}${p.ping_ms !== 'N/A' ? ' ms' : ''}</td>
+                        <td>${p.last_check || '-'}</td>
+                        <td class="actions">
+                            <button class="btn btn-sm" onclick="pingPrinter('${p.ip_address}')">Ping</button>
+                            ${!p.is_default ? `<button class="btn btn-sm" onclick="setDefault('${p.ip_address}')">デフォルト</button>` : ''}
+                            <button class="btn btn-sm btn-danger" onclick="deletePrinter('${p.ip_address}')">削除</button>
+                        </td>
+                    </tr>
+                `).join('');
+
+                select.innerHTML = '<option value="">プリンタを選択...</option>' +
+                    printers.map(p => `<option value="${p.ip_address}" ${p.is_default ? 'selected' : ''}>${p.name} (${p.ip_address})</option>`).join('');
+
+            } catch (e) {
+                showMessage('プリンタ一覧の取得に失敗: ' + e.message, 'error');
+            }
+        }
+
+        async function addPrinter() {
+            const name = document.getElementById('printerName').value.trim();
+            const ip = document.getElementById('printerIp').value.trim();
+            if (!name || !ip) {
+                showMessage('名前とIPアドレスを入力してください', 'error');
+                return;
+            }
+            const result = await apiCall('/config/printers', 'POST', { name, ip_address: ip });
+            showMessage(result.message, result.status);
+            if (result.status === 'success') {
+                document.getElementById('printerName').value = '';
+                document.getElementById('printerIp').value = '';
+                loadPrinters();
+            }
+        }
+
+        async function deletePrinter(ip) {
+            if (!confirm(`プリンタ ${ip} を削除しますか？`)) return;
+            const result = await apiCall(`/config/printers/${ip}`, 'DELETE');
+            showMessage(result.message, result.status);
+            loadPrinters();
+        }
+
+        async function setDefault(ip) {
+            const result = await apiCall('/config/default', 'POST', { ip_address: ip });
+            showMessage(result.message, result.status);
+            loadPrinters();
+        }
+
+        async function pingPrinter(ip) {
+            showMessage(`${ip} にPing中...`, 'success');
+            const result = await apiCall('/action/ping', 'POST', { ip_address: ip });
+            showMessage(result.message, result.status);
+            loadPrinters();
+        }
+
+        async function pingAllPrinters() {
+            const result = await apiCall('/action/ping_all', 'POST');
+            showMessage(result.message, result.status);
+            setTimeout(loadPrinters, 2000);
+        }
+
+        // === テストファイル ===
+        async function loadTestFiles() {
+            try {
+                const files = await apiCall('/data/test_files');
+                const select = document.getElementById('testFileSelect');
+                select.innerHTML = '<option value="">ファイルを選択...</option>' +
+                    files.map(f => `<option value="${f}">${f}</option>`).join('');
+            } catch (e) {
+                console.error('ファイル一覧取得エラー:', e);
+            }
+        }
+
+        async function uploadImage() {
+            const fileInput = document.getElementById('uploadFile');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            const result = await apiCall('/action/upload_test_image', 'POST', formData);
+            showMessage(result.message, result.status);
+            fileInput.value = '';
+            loadTestFiles();
+        }
+
+        async function testPrint() {
+            const ip = document.getElementById('testPrinterSelect').value;
+            const file = document.getElementById('testFileSelect').value;
+            if (!ip || !file) {
+                showMessage('プリンタとファイルを選択してください', 'error');
+                return;
+            }
+            const result = await apiCall('/action/testprint', 'POST', { ip_address: ip, file_name: file });
+            showMessage(result.message, result.status);
+            loadJobs();
+        }
+
+        // === ジョブキュー ===
+        async function loadJobs() {
+            try {
+                const data = await apiCall('/data/queue');
+                const tbody = document.getElementById('jobTableBody');
+                document.getElementById('queueCount').textContent = data.pending_count;
+
+                if (data.jobs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center;">ジョブがありません</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.jobs.map(j => `
+                    <tr>
+                        <td><img class="thumbnail" src="${API_BASE}/data/thumbnail?job_id=${j.job_id}" alt=""></td>
+                        <td title="${j.job_id}">${j.job_id.substring(0, 8)}...</td>
+                        <td>${j.file_name}</td>
+                        <td>${j.printer_ip}</td>
+                        <td class="status-${j.status.toLowerCase()}">${j.status}</td>
+                        <td>${j.timestamp}</td>
+                        <td class="actions">
+                            ${['QUEUED', 'PROCESSING'].includes(j.status) ?
+                                `<button class="btn btn-sm btn-danger" onclick="deleteJob('${j.job_id}')">キャンセル</button>` : ''}
+                            ${j.status === 'FAILED' ? `
+                                <button class="btn btn-sm btn-success" onclick="retryJob('${j.job_id}')">再実行</button>
+                                <button class="btn btn-sm btn-danger" onclick="deleteJob('${j.job_id}')">削除</button>
+                            ` : ''}
+                        </td>
+                    </tr>
+                `).join('');
+
+            } catch (e) {
+                showMessage('ジョブ一覧の取得に失敗: ' + e.message, 'error');
+            }
+        }
+
+        async function deleteJob(jobId) {
+            if (!confirm('このジョブを削除しますか？')) return;
+            const result = await apiCall('/action/delete_job', 'POST', { job_id: jobId });
+            showMessage(result.message, result.status);
+            loadJobs();
+        }
+
+        async function retryJob(jobId) {
+            if (!confirm('このジョブを再実行しますか？')) return;
+            const result = await apiCall('/action/retry_job', 'POST', { job_id: jobId });
+            showMessage(result.message, result.status);
+            loadJobs();
+        }
+
+        // === 初期化 ===
+        document.addEventListener('DOMContentLoaded', () => {
+            loadPrinters();
+            loadTestFiles();
+            loadJobs();
+
+            // 定期更新
+            setInterval(loadPrinters, 10000);
+            setInterval(loadJobs, 5000);
+        });
+    </script>
+</body>
+</html>

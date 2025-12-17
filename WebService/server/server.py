@@ -14,7 +14,6 @@ from .config import BaseServerConfig
 
 from MCP31PRINT.printer_driver import PrinterDriver
 from MCP31PRINT.image_converter import ImageConverter
-from MCP31PRINT.text_formatter import format_text_with_url_summary
 FONT_PATH='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'
 
 try:
@@ -74,9 +73,8 @@ class FileReceiverServer:
 
                 # 本文テキスト処理
                 if body_text:
-                    formatted_body_text = format_text_with_url_summary(body_text, max_line_length=30, max_display_length=900, url_title_max_length=15)[0]
-                    imglist.append(converter.text_to_bitmap(text=formatted_body_text))
-                    print(f"Converting body text to image in worker: {body_text[:50]}...") # 長すぎる場合は一部のみ表示
+                    imglist.append(converter.text_to_bitmap(text=body_text))
+                    print(f"Converting body text to image in worker: {body_text[:50]}...")
 
                 # 本文画像処理
                 if body_image_bytes_list:

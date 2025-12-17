@@ -9,5 +9,17 @@ my_discord_secrets.py
 MyActualServerConfig.py
 service_account_credentials.json
 *.txt
-*__pycache__*
+__pycache__/
 *.pyc
+DELETED_BOT_FEATURES_MEMO.md
+
+# Admin Web Service
+AdminWebService/uploads/
+AdminWebService/*.db
+debug_*.png
+
+# Windows
+nul
+
+# Tests
+.pytest_cache/

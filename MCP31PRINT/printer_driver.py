@@ -1,20 +1,34 @@
 # printer_driver.py
 
 from escpos.printer import Network
-from PIL import Image, ImageOps 
+from PIL import Image, ImageOps
 import io
 import time
-import socket 
-from struct import pack 
+import socket
+from struct import pack
 
-# local_configから設定をインポート
-from MCP31PRINT.local_config import LocalPrinterConfig
+# local_configから設定をインポート（存在しない場合はデフォルト値を使用）
+try:
+    from MCP31PRINT.local_config import LocalPrinterConfig
+    DEFAULT_PRINTER_IP = LocalPrinterConfig.PRINTER_IP
+    DEFAULT_PRINTER_PORT = LocalPrinterConfig.PRINTER_PORT
+    DEFAULT_PAPER_WIDTH_DOTS = LocalPrinterConfig.PAPER_WIDTH_DOTS
+except ImportError:
+    DEFAULT_PRINTER_IP = "192.168.1.100"
+    DEFAULT_PRINTER_PORT = 9100
+    DEFAULT_PAPER_WIDTH_DOTS = 576
+
 
 class PrinterDriver:
-    def __init__(self):
-        self.printer_ip = LocalPrinterConfig.PRINTER_IP
-        self.printer_port = LocalPrinterConfig.PRINTER_PORT
-        self.paper_width_dots = LocalPrinterConfig.PAPER_WIDTH_DOTS
+    def __init__(self, printer_ip: str = None, printer_port: int = None, paper_width_dots: int = None):
+        """
+        :param printer_ip: プリンタのIPアドレス（Noneの場合はデフォルト値を使用）
+        :param printer_port: プリンタのポート番号（Noneの場合はデフォルト値を使用）
+        :param paper_width_dots: 用紙幅のドット数（Noneの場合はデフォルト値を使用）
+        """
+        self.printer_ip = printer_ip or DEFAULT_PRINTER_IP
+        self.printer_port = printer_port or DEFAULT_PRINTER_PORT
+        self.paper_width_dots = paper_width_dots or DEFAULT_PAPER_WIDTH_DOTS
         self.printer = None
         self.connection_timeout = 5 # 接続試行時のタイムアウト (秒)
 
@@ -188,9 +202,10 @@ class PrinterDriver:
         RGB/RGBA画像も適切に処理し、高度なディザリングを適用。
         :param image_input: 画像ファイルのパス (str) または BytesIO オブジェクト、PIL.Image オブジェクト
         :param alignment: 画像の水平アライメント (0: 左寄せ, 1: 中央寄せ, 2: 右寄せ)
+        :raises ConnectionError: プリンタへの接続に失敗した場合
         """
         if not self._connect():
-            return
+            raise ConnectionError(f"プリンタ {self.printer_ip}:{self.printer_port} への接続に失敗しました")
 
         try:
             self.printer._raw(b'\x1B\x40') # プリンター初期化コマンド
@@ -298,9 +313,10 @@ class PrinterDriver:
         内部でPIL.Imageに変換し、必要な画像処理（リサイズ、モノクロ化、パディングなど）を行う。
         :param image_bytes: 画像のバイト列データ (例: PNG, JPEGなどのファイルデータ)
         :param alignment: 画像の水平アライメント (0: 左寄せ, 1: 中央寄せ, 2: 右寄せ)
+        :raises ConnectionError: プリンタへの接続に失敗した場合
         """
         if not self._connect():
-            return
+            raise ConnectionError(f"プリンタ {self.printer_ip}:{self.printer_port} への接続に失敗しました")
 
         try:
             self.printer._raw(b'\x1B\x40') # プリンター初期化コマンド
@@ -409,9 +425,10 @@ class PrinterDriver:
         """
         指定された行数だけ空白行を印刷して紙送りを行う。
         :param num_lines: 印刷する空白行の数
+        :raises ConnectionError: プリンタへの接続に失敗した場合
         """
         if not self._connect():
-            return
+            raise ConnectionError(f"プリンタ {self.printer_ip}:{self.printer_port} への接続に失敗しました")
         try:
             print(f"DEBUG: Printing {num_lines} empty lines for paper feed.")
             for _ in range(num_lines):
@@ -426,9 +443,10 @@ class PrinterDriver:
         """
         紙をカットする (StarPRNTコマンド)。
         詳細なエラー情報を出力。
+        :raises ConnectionError: プリンタへの接続に失敗した場合
         """
         if not self._connect():
-            return
+            raise ConnectionError(f"プリンタ {self.printer_ip}:{self.printer_port} への接続に失敗しました")
         
         try:
             if mode == 'full':

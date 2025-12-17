@@ -96,7 +96,7 @@ def deserialize_data(json_data_bytes):
             "content": _deprocess_content(data["header"].get("type"), data["header"].get("content"))
         }
     
-    body_text = data.get("body_text", "")
+    body_text = data.get("body_text") or ""
     
     body_image_bytes_list = []
     if "body_images" in data and isinstance(data["body_images"], list):
