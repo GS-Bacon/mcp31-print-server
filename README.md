@@ -70,6 +70,74 @@ driver.print_empty_lines(3)
 driver.cut_paper()
 ```
 
+## API仕様
+
+### 管理API (AdminWebService) - ポート5000
+
+#### プリンタ設定
+
+| メソッド | エンドポイント | 説明 |
+|---------|---------------|------|
+| GET | `/admin/config/printers` | 登録済みプリンタ一覧を取得 |
+| POST | `/admin/config/printers` | プリンタを登録 |
+| DELETE | `/admin/config/printers/<ip>` | プリンタを削除 |
+| POST | `/admin/config/default` | デフォルトプリンタを設定 |
+
+#### アクション
+
+| メソッド | エンドポイント | 説明 |
+|---------|---------------|------|
+| POST | `/admin/action/ping` | 単一プリンタの疎通確認 |
+| POST | `/admin/action/ping_all` | 全プリンタの疎通確認 |
+| POST | `/admin/action/testprint` | テスト印刷ジョブを登録 |
+| POST | `/admin/action/upload_test_image` | テスト画像をアップロード |
+| POST | `/admin/action/delete_job` | ジョブを削除 |
+| POST | `/admin/action/retry_job` | 失敗ジョブを再実行 |
+
+#### データ取得
+
+| メソッド | エンドポイント | 説明 |
+|---------|---------------|------|
+| GET | `/admin/data/test_files` | アップロード済み画像一覧 |
+| GET | `/admin/data/queue` | ジョブキュー・履歴を取得 |
+| GET | `/admin/data/thumbnail?job_id=<id>` | ジョブのサムネイル画像 |
+
+#### リクエスト例
+
+```bash
+# プリンタ登録
+curl -X POST http://localhost:5000/admin/config/printers \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Reception", "ip_address": "192.168.1.100"}'
+
+# 画像アップロード
+curl -X POST http://localhost:5000/admin/action/upload_test_image \
+  -F "file=@test.png"
+
+# テスト印刷
+curl -X POST http://localhost:5000/admin/action/testprint \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address": "192.168.1.100", "file_name": "test.png"}'
+```
+
+### Socket API (WebService)
+
+ヘッダー・本文・フッターを含む印刷データをSocket経由で送信できます。
+
+```python
+from WebService.client.client import FileSenderClient
+
+client = FileSenderClient()
+client.send_data(
+    header_data={"type": "text", "content": "タイトル"},
+    body_text_message="本文テキスト",
+    body_image_bytes_list=[image_bytes],  # バイト列のリスト
+    footer_data={"type": "text", "content": "フッター"}
+)
+```
+
+設定ファイル `WebService/client/MyActualServerConfig.py` でサーバーIP/ポートを指定。
+
 ## ディレクトリ構成
 
 ```
