@@ -1,4 +1,4 @@
-# MCP31PrinterBOT - プリンタ受付サーバー用依存関係
+# mcp31-print-server - プリンタ受付サーバー用依存関係
 
 # 画像処理
 pillow>=11.0.0
