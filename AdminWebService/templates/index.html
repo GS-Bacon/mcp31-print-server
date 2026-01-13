@@ -238,8 +238,34 @@
                     <input type="text" id="printerName" placeholder="プリンタ名">
                     <input type="text" id="printerIp" placeholder="IPアドレス">
                 </div>
-                <button class="btn" onclick="addPrinter()">登録</button>
-                <button class="btn" onclick="pingAllPrinters()">全てPing</button>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn" onclick="addPrinter()">登録</button>
+                    <button class="btn" onclick="pingAllPrinters()">全てPing</button>
+                    <button class="btn btn-success" id="discoverBtn" onclick="discoverPrinters()">
+                        <span id="discoverBtnText">LAN検出</span>
+                        <span id="discoverSpinner" class="loading" style="display: none; margin-left: 5px;"></span>
+                    </button>
+                </div>
+
+                <!-- 検出結果セクション -->
+                <div id="discoveryResults" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #334;">
+                    <h3 style="font-size: 1rem; margin-bottom: 10px;">
+                        検出されたプリンタ
+                        <span id="discoveryMethod" style="font-size: 0.8rem; opacity: 0.7;"></span>
+                    </h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>名前</th>
+                                <th>IPアドレス</th>
+                                <th>ポート</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="discoveredPrintersBody">
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- テスト印刷 -->
@@ -344,16 +370,24 @@
                 }
 
                 tbody.innerHTML = printers.map(p => `
-                    <tr>
+                    <tr data-ip="${p.ip_address}">
                         <td>
-                            ${p.name}
-                            ${p.is_default ? '<span class="default-badge">デフォルト</span>' : ''}
+                            <span class="printer-name-display">
+                                ${p.name}
+                                ${p.is_default ? '<span class="default-badge">デフォルト</span>' : ''}
+                            </span>
+                            <span class="printer-name-edit" style="display: none;">
+                                <input type="text" class="edit-name-input" value="${p.name}" style="width: 120px; margin: 0; padding: 5px;">
+                                <button class="btn btn-sm btn-success" onclick="savePrinterName('${p.ip_address}')">保存</button>
+                                <button class="btn btn-sm" onclick="cancelEditName('${p.ip_address}')">取消</button>
+                            </span>
                         </td>
                         <td>${p.ip_address}</td>
                         <td class="status-${p.status.toLowerCase()}">${p.status}</td>
                         <td>${p.ping_ms}${p.ping_ms !== 'N/A' ? ' ms' : ''}</td>
                         <td>${p.last_check || '-'}</td>
                         <td class="actions">
+                            <button class="btn btn-sm" onclick="editPrinterName('${p.ip_address}')">編集</button>
                             <button class="btn btn-sm" onclick="pingPrinter('${p.ip_address}')">Ping</button>
                             ${!p.is_default ? `<button class="btn btn-sm" onclick="setDefault('${p.ip_address}')">デフォルト</button>` : ''}
                             <button class="btn btn-sm btn-danger" onclick="deletePrinter('${p.ip_address}')">削除</button>
@@ -398,6 +432,36 @@
             loadPrinters();
         }
 
+        function editPrinterName(ip) {
+            const row = document.querySelector(`tr[data-ip="${ip}"]`);
+            if (!row) return;
+            row.querySelector('.printer-name-display').style.display = 'none';
+            row.querySelector('.printer-name-edit').style.display = 'inline';
+            row.querySelector('.edit-name-input').focus();
+        }
+
+        function cancelEditName(ip) {
+            const row = document.querySelector(`tr[data-ip="${ip}"]`);
+            if (!row) return;
+            row.querySelector('.printer-name-display').style.display = 'inline';
+            row.querySelector('.printer-name-edit').style.display = 'none';
+        }
+
+        async function savePrinterName(ip) {
+            const row = document.querySelector(`tr[data-ip="${ip}"]`);
+            if (!row) return;
+            const newName = row.querySelector('.edit-name-input').value.trim();
+            if (!newName) {
+                showMessage('プリンタ名を入力してください', 'error');
+                return;
+            }
+            const result = await apiCall(`/config/printers/${ip}`, 'PUT', { name: newName });
+            showMessage(result.message, result.status);
+            if (result.status === 'success') {
+                loadPrinters();
+            }
+        }
+
         async function pingPrinter(ip) {
             showMessage(`${ip} にPing中...`, 'success');
             const result = await apiCall('/action/ping', 'POST', { ip_address: ip });
@@ -409,6 +473,148 @@
             const result = await apiCall('/action/ping_all', 'POST');
             showMessage(result.message, result.status);
             setTimeout(loadPrinters, 2000);
+        }
+
+        // === プリンタ検出 ===
+        let discoveryPollInterval = null;
+
+        async function discoverPrinters() {
+            const btn = document.getElementById('discoverBtn');
+            const btnText = document.getElementById('discoverBtnText');
+            const spinner = document.getElementById('discoverSpinner');
+            const resultsDiv = document.getElementById('discoveryResults');
+
+            // ボタン状態を変更
+            btn.disabled = true;
+            btnText.textContent = '検出中...';
+            spinner.style.display = 'inline-block';
+            resultsDiv.style.display = 'none';
+
+            try {
+                // 検出開始
+                const startResult = await apiCall('/action/discover_printers', 'POST', {
+                    mdns_timeout: 3.0,
+                    fallback_to_scan: true
+                });
+
+                if (startResult.status === 'already_running') {
+                    showMessage('検出処理が既に実行中です', 'error');
+                    resetDiscoverButton();
+                    return;
+                }
+
+                // ポーリングで進捗を監視
+                discoveryPollInterval = setInterval(async () => {
+                    const status = await apiCall('/action/discover_status', 'GET');
+
+                    btnText.textContent = `検出中... ${status.progress}%`;
+
+                    if (!status.running) {
+                        clearInterval(discoveryPollInterval);
+                        discoveryPollInterval = null;
+
+                        if (status.error) {
+                            showMessage(`検出エラー: ${status.error}`, 'error');
+                        } else if (status.results) {
+                            displayDiscoveryResults(status.results);
+                        }
+
+                        resetDiscoverButton();
+                    }
+                }, 500);
+
+            } catch (e) {
+                showMessage('検出の開始に失敗: ' + e.message, 'error');
+                resetDiscoverButton();
+            }
+        }
+
+        function resetDiscoverButton() {
+            const btn = document.getElementById('discoverBtn');
+            const btnText = document.getElementById('discoverBtnText');
+            const spinner = document.getElementById('discoverSpinner');
+
+            btn.disabled = false;
+            btnText.textContent = 'LAN検出';
+            spinner.style.display = 'none';
+        }
+
+        function displayDiscoveryResults(results) {
+            const resultsDiv = document.getElementById('discoveryResults');
+            const tbody = document.getElementById('discoveredPrintersBody');
+            const methodSpan = document.getElementById('discoveryMethod');
+
+            if (!results.printers || results.printers.length === 0) {
+                showMessage('プリンタが見つかりませんでした', 'error');
+                resultsDiv.style.display = 'none';
+                return;
+            }
+
+            // 検出方法を表示
+            const methodText = results.method_used === 'mdns' ? '(mDNS)' : '(ポートスキャン)';
+            methodSpan.textContent = methodText;
+
+            // テーブルを構築
+            tbody.innerHTML = results.printers.map(p => {
+                const defaultName = p.name || `Printer (${p.ip_address})`;
+                const isRegistered = p.already_registered;
+                return `
+                    <tr>
+                        <td>
+                            <input type="text"
+                                   class="discovered-name"
+                                   value="${defaultName}"
+                                   data-ip="${p.ip_address}"
+                                   style="width: 150px; margin: 0;"
+                                   ${isRegistered ? 'disabled' : ''}>
+                        </td>
+                        <td>${p.ip_address}</td>
+                        <td>${p.port || 9100}</td>
+                        <td>
+                            ${isRegistered ?
+                                '<span style="color: #667eea;">登録済み</span>' :
+                                `<button class="btn btn-sm btn-success" onclick="registerDiscoveredPrinter('${p.ip_address}')">登録</button>`
+                            }
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            resultsDiv.style.display = 'block';
+            const newCount = results.printers.filter(p => !p.already_registered).length;
+            showMessage(`${results.printers.length}台検出 (新規: ${newCount}台)`, 'success');
+        }
+
+        async function registerDiscoveredPrinter(ip) {
+            const nameInput = document.querySelector(`input.discovered-name[data-ip="${ip}"]`);
+            const name = nameInput ? nameInput.value.trim() : `Printer (${ip})`;
+
+            if (!name) {
+                showMessage('プリンタ名を入力してください', 'error');
+                return;
+            }
+
+            try {
+                const result = await apiCall('/config/printers', 'POST', {
+                    name: name,
+                    ip_address: ip,
+                    paper_width_dots: 576
+                });
+
+                showMessage(result.message, result.status);
+
+                if (result.status === 'success') {
+                    // 登録成功したら行を更新
+                    const row = nameInput.closest('tr');
+                    if (row) {
+                        nameInput.disabled = true;
+                        row.querySelector('td:last-child').innerHTML = '<span style="color: #667eea;">登録済み</span>';
+                    }
+                    loadPrinters();
+                }
+            } catch (e) {
+                showMessage('登録に失敗: ' + e.message, 'error');
+            }
         }
 
         // === テストファイル ===

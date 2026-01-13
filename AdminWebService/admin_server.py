@@ -28,6 +28,7 @@ project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
 
 from AdminWebService import database as db
+from AdminWebService import printer_discovery
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -262,6 +263,106 @@ def ping_all_printers():
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# === プリンタ自動検出 API ===
+
+# 検出状態を管理するグローバル変数
+_discovery_status = {
+    "running": False,
+    "progress": 0,
+    "results": None,
+    "error": None
+}
+_discovery_lock = threading.Lock()
+
+
+@app.route('/admin/action/discover_printers', methods=['POST'])
+def discover_printers():
+    """
+    LAN内プリンタの自動検出を開始（非同期）
+
+    Request body (optional):
+    {
+        "mdns_timeout": 3.0,      # mDNS検索タイムアウト（秒）
+        "fallback_to_scan": true  # mDNSで見つからない場合ポートスキャン
+    }
+    """
+    global _discovery_status
+
+    with _discovery_lock:
+        if _discovery_status["running"]:
+            return jsonify({
+                "status": "already_running",
+                "message": "検出処理が既に実行中です"
+            }), 409
+
+        _discovery_status = {
+            "running": True,
+            "progress": 0,
+            "results": None,
+            "error": None
+        }
+
+    data = request.get_json(silent=True) or {}
+    mdns_timeout = data.get('mdns_timeout', 3.0)
+    fallback_to_scan = data.get('fallback_to_scan', True)
+
+    # 登録済みIPリストを取得（フィルタ用）
+    registered_ips = set()
+    try:
+        printers = db.get_all_printers()
+        registered_ips = {p['ip_address'] for p in printers}
+    except Exception:
+        pass
+
+    def run_discovery():
+        global _discovery_status
+        try:
+            def progress_callback(current, total):
+                with _discovery_lock:
+                    _discovery_status["progress"] = int((current / total) * 100) if total > 0 else 0
+
+            result = printer_discovery.discover_printers(
+                mdns_timeout=mdns_timeout,
+                fallback_to_scan=fallback_to_scan,
+                progress_callback=progress_callback
+            )
+
+            # 登録済みプリンタをフィルタしてフラグを付与
+            for p in result.get("printers", []):
+                p["already_registered"] = p["ip_address"] in registered_ips
+
+            with _discovery_lock:
+                _discovery_status["results"] = result
+                _discovery_status["progress"] = 100
+
+        except Exception as e:
+            with _discovery_lock:
+                _discovery_status["error"] = str(e)
+        finally:
+            with _discovery_lock:
+                _discovery_status["running"] = False
+
+    thread = threading.Thread(target=run_discovery)
+    thread.start()
+
+    return jsonify({
+        "status": "started",
+        "message": "プリンタ検出を開始しました"
+    })
+
+
+@app.route('/admin/action/discover_status', methods=['GET'])
+def get_discovery_status():
+    """検出処理の進捗状況を取得"""
+    with _discovery_lock:
+        return jsonify({
+            "running": _discovery_status["running"],
+            "progress": _discovery_status["progress"],
+            "results": _discovery_status["results"],
+            "error": _discovery_status["error"]
+        })
 
 
 @app.route('/admin/action/testprint', methods=['POST'])
@@ -685,10 +786,10 @@ if __name__ == '__main__':
     start_worker()
 
     # mDNSサービス登録
-    register_mdns_service(port=5000)
+    register_mdns_service(port=5001)
 
     # 終了時にサービスを登録解除
     atexit.register(unregister_mdns_service)
 
     # サーバー起動（debugモード無効でワーカーが正しく動作する）
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
